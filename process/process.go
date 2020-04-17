@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"sync/atomic"
 )
 
 var client *http.Client
 
-type dirInfo struct {
+type DirInfos struct {
 	Path      string
-	DirCount  int
-	FileCount int
-	TotalSize int
+	DirCount  int64
+	FileCount int64
+	TotalSize int64
 }
 
 type (
@@ -25,7 +26,7 @@ type (
 	dirs struct {
 		Name  string
 		IsDir bool
-		Size  int
+		Size  int64
 	}
 )
 
@@ -35,38 +36,46 @@ func init() {
 	client = new(http.Client)
 }
 
-func GetDir(path string) ([]byte, error) {
-	address := fmt.Sprintf("%s?path=%s", DirService, path)
-	resp, err := client.Get(address)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, err
-	}
-	blob, err := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	return blob, nil
-}
-
-func Calculate(blob []byte) (dirInfo, error) {
+func GetDirInfo(path string, dirInfo DirInfos, ch chan int) (DirInfos, error) {
+	ch <- 1
 	var dir result
-	var dirInfo dirInfo
-	err := json.Unmarshal(blob, &dir)
+	blob, err := getDir(path)
+	if err != nil {
+		return dirInfo, err
+	}
+	err = json.Unmarshal(blob, &dir)
 	if err != nil {
 		return dirInfo, err
 	}
 	for _, d := range dir.Dirs {
 		if d.IsDir {
-			dirInfo.DirCount++
+			<-ch
+			go GetDirInfo(d.Name, dirInfo, ch)
+			newDirCount := atomic.AddInt64(&dirInfo.DirCount, 1)
+			dirInfo.DirCount = newDirCount
 		} else {
-			dirInfo.FileCount++
-			dirInfo.TotalSize += d.Size
+			newFileCount := atomic.AddInt64(&dirInfo.FileCount, 1)
+			dirInfo.FileCount = newFileCount
+			newTotalCount := atomic.AddInt64(&dirInfo.TotalSize, d.Size)
+			dirInfo.TotalSize = newTotalCount
 		}
 	}
-	dirInfo.Path = dir.Path
 	return dirInfo, nil
+}
+
+func getDir(path string) ([]byte, error) {
+	address := fmt.Sprintf("%s?path=%s", DirService, path)
+	resp, err := client.Get(address)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, err
+	}
+	blob, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return blob, nil
 }

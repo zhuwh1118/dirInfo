@@ -9,15 +9,14 @@ import (
 
 func DirInfo(c *gin.Context) {
 	path := c.Query("path")
-	blob, err := process.GetDir(path)
+	dirInfo := process.DirInfos{}
+	var ch = make(chan int, 5)
+	dirInfo, err := process.GetDirInfo(path, dirInfo, ch)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
-	dirInfo, err := process.Calculate(blob)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
+	dirInfo.Path = path
 	c.JSON(http.StatusOK, dirInfo)
+	return
 }
